@@ -28,8 +28,26 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 
+function resolveDataDir() {
+  const defaultDir = path.join(os.homedir(), 'Downloads', 'mcp-fetch-page');
+  const configuredDir = process.env.MCP_FETCH_PAGE_DATA_DIR;
+  if (!configuredDir || configuredDir.trim() === '') {
+    return defaultDir;
+  }
+
+  const normalized = configuredDir.trim();
+  if (normalized === '~') {
+    return os.homedir();
+  }
+  if (normalized.startsWith('~/')) {
+    return path.join(os.homedir(), normalized.slice(2));
+  }
+  return path.resolve(normalized);
+}
+
+const DATA_DIR = resolveDataDir();
 // 使用与server.js相同的cookie目录
-const COOKIE_DIR = path.join(os.homedir(), 'Downloads', 'mcp-fetch-page', 'cookies');
+const COOKIE_DIR = path.join(DATA_DIR, 'cookies');
 
 // 模拟MCP工具调用的函数
 async function simulateMCPCall(toolName, args) {
@@ -451,6 +469,7 @@ function showHelp() {
 注意:
   - 智能抓取会自动选择最佳方法（HTTP → SPA回退）
   - Cookie会自动加载（如果可用），无需手动管理
+  - 可用 MCP_FETCH_PAGE_DATA_DIR 自定义数据目录根路径
   - Cookie文件保存在: ${COOKIE_DIR}
   - 需要登录的页面会显示友好提示
 `);

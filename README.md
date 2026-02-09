@@ -27,6 +27,22 @@ Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_
 }
 ```
 
+To customize runtime data directory (recommended on VPS), set `MCP_FETCH_PAGE_DATA_DIR` in MCP `env`:
+
+```json
+{
+  "mcpServers": {
+    "mcp-fetch-page": {
+      "command": "npx",
+      "args": ["-y", "mcp-fetch-page@latest"],
+      "env": {
+        "MCP_FETCH_PAGE_DATA_DIR": "/data/mcp-fetch-page"
+      }
+    }
+  }
+}
+```
+
 Restart Claude Desktop.
 
 ### 2. Install Chrome Extension (Optional - for authenticated pages)
@@ -72,7 +88,7 @@ The system automatically uses optimized selectors for:
 - **mp.weixin.qq.com** → `.rich_media_wrp` (WeChat articles)
 - **wx.zsxq.com** → `.content` (Knowledge Planet)
 - **cnblogs.com** → `.post` (Blog Garden)
-- Add more in `mcp-server/domain-selectors.json`
+- Add more in `mcp-server/domain-rules.json` (`domain-selectors.json` remains supported for compatibility)
 
 ### Debug Tools
 
@@ -86,6 +102,19 @@ node debug.js test-spa "https://example.com" "#content"
 npx @modelcontextprotocol/inspector
 # Then visit http://localhost:6274
 ```
+
+### Data Directory (Optional)
+
+By default, runtime data is stored under `~/Downloads/mcp-fetch-page/`:
+- Cookies: `~/Downloads/mcp-fetch-page/cookies`
+- Pages: `~/Downloads/mcp-fetch-page/pages`
+
+For MCP usage, configure `MCP_FETCH_PAGE_DATA_DIR` in your MCP client config `env` field.
+The server will always use:
+- `<MCP_FETCH_PAGE_DATA_DIR>/cookies`
+- `<MCP_FETCH_PAGE_DATA_DIR>/pages`
+
+`node mcp-server/server.js` is only for local development/debugging.
 
 ## Parameters
 
@@ -112,7 +141,8 @@ mcp-fetch-page/
 └── mcp-server/              # MCP server
     ├── server.js            # Main server
     ├── debug.js             # Debug tools
-    └── domain-selectors.json # Domain selector config
+    ├── domain-rules.json     # Domain rules config (selector + blocked markers)
+    └── domain-selectors.json # Legacy selector config (compatibility fallback)
 ```
 
 ## Troubleshooting
@@ -120,7 +150,7 @@ mcp-fetch-page/
 - **Extension not working**: Make sure you're on a normal website (not chrome:// pages)
 - **No cookies found**: Try logging in again and saving cookies
 - **MCP not connecting**: Check Node.js installation and restart your editor
-- **Path error**: Make sure to use full path `/Users/YOUR_USERNAME/...` instead of `~/...`
+- **Path error**: Set `MCP_FETCH_PAGE_DATA_DIR` in MCP config `env` to a writable absolute path on your machine/VPS
 - **CSS selector not working**: Verify the selector exists on the page
 
 That's it! 🍪

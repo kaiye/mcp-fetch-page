@@ -27,6 +27,22 @@
 }
 ```
 
+如果需要自定义运行数据目录（VPS 场景推荐），请在 MCP 配置的 `env` 中设置 `MCP_FETCH_PAGE_DATA_DIR`：
+
+```json
+{
+  "mcpServers": {
+    "mcp-fetch-page": {
+      "command": "npx",
+      "args": ["-y", "mcp-fetch-page@latest"],
+      "env": {
+        "MCP_FETCH_PAGE_DATA_DIR": "/data/mcp-fetch-page"
+      }
+    }
+  }
+}
+```
+
 重启 Claude Desktop。
 
 ### 2. 安装 Chrome 扩展（可选 - 用于需要登录的页面）
@@ -72,7 +88,7 @@ fetchpage(url="https://example.com", headless=false)
 - **mp.weixin.qq.com** → `.rich_media_wrp` (微信公众号文章)
 - **wx.zsxq.com** → `.content` (知识星球)
 - **cnblogs.com** → `.post` (博客园)
-- 在 `mcp-server/domain-selectors.json` 中添加更多
+- 在 `mcp-server/domain-rules.json` 中添加更多（兼容读取 `domain-selectors.json`）
 
 ### 调试工具
 
@@ -86,6 +102,19 @@ node debug.js test-spa "https://example.com" "#content"
 npx @modelcontextprotocol/inspector
 # 然后访问 http://localhost:6274
 ```
+
+### 数据目录（可选）
+
+默认运行数据目录为 `~/Downloads/mcp-fetch-page/`：
+- Cookies: `~/Downloads/mcp-fetch-page/cookies`
+- Pages: `~/Downloads/mcp-fetch-page/pages`
+
+在 MCP 使用场景中，通过 MCP 客户端配置的 `env` 字段设置 `MCP_FETCH_PAGE_DATA_DIR`。
+服务端固定使用：
+- `<MCP_FETCH_PAGE_DATA_DIR>/cookies`
+- `<MCP_FETCH_PAGE_DATA_DIR>/pages`
+
+`node mcp-server/server.js` 仅用于本地开发/调试。
 
 ## 参数说明
 
@@ -112,7 +141,8 @@ mcp-fetch-page/
 └── mcp-server/              # MCP服务器
     ├── server.js            # 主服务器
     ├── debug.js             # 调试工具
-    └── domain-selectors.json # 域名选择器配置
+    ├── domain-rules.json     # 域名规则配置（selector + blocked 标记）
+    └── domain-selectors.json # 旧版选择器配置（兼容回退）
 ```
 
 ## 常见问题
@@ -120,7 +150,7 @@ mcp-fetch-page/
 - **扩展无法使用**: 确保在正常网站使用（不是chrome://页面）
 - **找不到cookies**: 重新登录网站并保存cookies
 - **MCP连接失败**: 检查Node.js安装并重启编辑器
-- **路径错误**: 确保使用完整路径 `/Users/YOUR_USERNAME/...` 而不是 `~/...`
+- **路径错误**: 在 MCP 配置的 `env` 中设置 `MCP_FETCH_PAGE_DATA_DIR` 为可写绝对路径
 - **CSS选择器无效**: 验证选择器在页面中确实存在
 
 就这么简单！🍪

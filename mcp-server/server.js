@@ -8,11 +8,29 @@ import path from 'path';
 import { URL } from 'url';
 import os from 'os';
 import puppeteer from 'puppeteer';
+import { main as html2md4llm } from 'html2md4llm';
 
-// Cookie存储目录 - 统一使用Downloads下的mcp-fetch-page目录
-const COOKIE_DIR = path.join(os.homedir(), 'Downloads', 'mcp-fetch-page', 'cookies');
-// 页面内容存储目录
-const PAGES_DIR = path.join(os.homedir(), 'Downloads', 'mcp-fetch-page', 'pages');
+function resolveDataDir() {
+  const defaultDir = path.join(os.homedir(), 'Downloads', 'mcp-fetch-page');
+  const configuredDir = process.env.MCP_FETCH_PAGE_DATA_DIR;
+  if (!configuredDir || configuredDir.trim() === '') {
+    return defaultDir;
+  }
+
+  const normalized = configuredDir.trim();
+  if (normalized === '~') {
+    return os.homedir();
+  }
+  if (normalized.startsWith('~/')) {
+    return path.join(os.homedir(), normalized.slice(2));
+  }
+  return path.resolve(normalized);
+}
+
+// 运行时数据根目录：默认 ~/Downloads/mcp-fetch-page，可通过 MCP_FETCH_PAGE_DATA_DIR 覆盖
+const DATA_DIR = resolveDataDir();
+const COOKIE_DIR = path.join(DATA_DIR, 'cookies');
+const PAGES_DIR = path.join(DATA_DIR, 'pages');
 
 // 优先使用系统已安装的 Chrome，避免依赖 Puppeteer 管理的浏览器下载
 function resolveSystemChromePath() {
@@ -58,46 +76,69 @@ function resolveSystemChromePath() {
   }
 }
 
-// 加载域名选择器配置
-let domainSelectors = {};
+// 加载域名规则配置（优先 domain-rules.json，兼容回退 domain-selectors.json）
+let domainRules = {};
 try {
   const currentDir = path.dirname(import.meta.url.replace('file://', ''));
-  const configPath = path.join(currentDir, 'domain-selectors.json');
+  const rulesPath = path.join(currentDir, 'domain-rules.json');
+  const legacySelectorsPath = path.join(currentDir, 'domain-selectors.json');
+  const configPath = fs.existsSync(rulesPath) ? rulesPath : legacySelectorsPath;
   const configContent = fs.readFileSync(configPath, 'utf8');
-  domainSelectors = JSON.parse(configContent);
+  const rawRules = JSON.parse(configContent);
+  domainRules = normalizeDomainRules(rawRules);
 } catch (error) {
   // 如果配置文件不存在或读取失败，使用空配置
-  domainSelectors = {};
+  domainRules = {};
 }
 
+function normalizeDomainRules(rawRules) {
+  const normalized = {};
+  if (!rawRules || typeof rawRules !== 'object') return normalized;
 
-// 根据URL获取对应的CSS选择器
-function getSelectorForDomain(url) {
+  for (const [domain, value] of Object.entries(rawRules)) {
+    if (!domain) continue;
+    if (typeof value === 'string') {
+      normalized[domain] = { selector: value, blockedIfContains: [] };
+      continue;
+    }
+    if (value && typeof value === 'object') {
+      const selector = typeof value.selector === 'string' ? value.selector : null;
+      const blockedIfContains = Array.isArray(value.blocked_if_contains)
+        ? value.blocked_if_contains.filter(item => typeof item === 'string' && item.trim().length > 0)
+        : [];
+      normalized[domain] = { selector, blockedIfContains };
+    }
+  }
+  return normalized;
+}
+
+// 根据URL获取对应的域名规则
+function getDomainRuleForUrl(url) {
   try {
     const urlObj = new URL(url);
     const hostname = urlObj.hostname.toLowerCase();
     
     // 精确匹配
-    if (domainSelectors[hostname]) {
-      return domainSelectors[hostname];
+    if (domainRules[hostname]) {
+      return domainRules[hostname];
     }
     
     // 子域名匹配（去掉www等前缀）
     const mainDomain = hostname.replace(/^(www\.|m\.|mobile\.)/, '');
-    if (domainSelectors[mainDomain]) {
-      return domainSelectors[mainDomain];
+    if (domainRules[mainDomain]) {
+      return domainRules[mainDomain];
     }
     
     // 部分匹配（查找包含的域名）
-    for (const [domain, selector] of Object.entries(domainSelectors)) {
+    for (const [domain, rule] of Object.entries(domainRules)) {
       if (hostname.includes(domain) || domain.includes(mainDomain)) {
-        return selector;
+        return rule;
       }
     }
     
-    return null;
+    return { selector: null, blockedIfContains: [] };
   } catch (error) {
-    return null;
+    return { selector: null, blockedIfContains: [] };
   }
 }
 
@@ -312,6 +353,45 @@ class CookieManager {
     }
   }
 
+  isCookieExpiredForDomain(cookieData, hostname) {
+    try {
+      if (!cookieData || !cookieData.cookies || !hostname) return false;
+
+      const now = new Date();
+      const cleanHost = String(hostname).toLowerCase().replace(/^www\./, '');
+      let hasExpiredCookies = false;
+      let expiredCount = 0;
+      let totalWithExpiration = 0;
+      const expiredCookieNames = [];
+
+      for (const cookie of cookieData.cookies) {
+        if (!cookie || !cookie.domain || !cookie.expirationDate) continue;
+        const cookieDomain = String(cookie.domain).toLowerCase().replace(/^\./, '').replace(/^www\./, '');
+        const matched = cleanHost === cookieDomain || cleanHost.endsWith(`.${cookieDomain}`);
+        if (!matched) continue;
+
+        totalWithExpiration++;
+        const expireTime = new Date(cookie.expirationDate * 1000);
+        if (now > expireTime) {
+          hasExpiredCookies = true;
+          expiredCount++;
+          expiredCookieNames.push(cookie.name);
+        }
+      }
+
+      if (hasExpiredCookies && totalWithExpiration > 0) {
+        console.error(`⚠️  检测到当前域名 ${cleanHost} 的 ${expiredCount}/${totalWithExpiration} 个Cookie已过期:`);
+        console.error(`   过期Cookie: ${expiredCookieNames.join(', ')}`);
+        return true;
+      }
+
+      return false;
+    } catch (error) {
+      console.error('域名Cookie过期检测失败:', error);
+      return false;
+    }
+  }
+
   cookiesToString(cookieData) {
     const cookies = [];
     for (const cookie of cookieData.cookies || []) {
@@ -347,6 +427,10 @@ function savePageContent(url, content, title, isError = false) {
     console.error(`❌ 保存页面内容失败:`, error.message);
     return null;
   }
+}
+
+function toYamlPlainString(value) {
+  return String(value ?? '').replace(/\r?\n/g, ' ').trim();
 }
 
 
@@ -429,18 +513,10 @@ async function handleFetchSpaWithCookies(args, sendProgress = null, shouldSaveFi
 
     // 自动合并所有cookie文件，解决短链/跨域跳转漏cookie问题
     const merged = cookieManager.loadAndMergeAllCookies();
-    // 收集需要在返回内容中提示给用户的信息（例如 cookie 过期提醒）
-    const advisoryNotes = [];
     if (merged) {
-      const hasExpired = cookieManager.isCookieExpired(merged);
+      const hasExpired = cookieManager.isCookieExpiredForDomain(merged, domain);
       cookieData = merged;
       if (sendProgress) await sendProgress(0, 1, `已读取Cookie（合并 ${cookieData.cookies?.length || 0} 个${hasExpired ? '，包含过期项' : ''}）`);
-      if (hasExpired) {
-        advisoryNotes.push(
-          '⚠️ 检测到部分 Cookie 可能已过期：如果内容需要登录但无法访问，建议使用 Chrome 扩展 “Fetch Page MCP Tools” 刷新本地登录信息后重试。',
-          `步骤：\n1) 打开并登录：${url}\n2) 通过扩展保存 cookies/localStorage\n3) 回到对话再次调用 mcp fetchpage`
-        );
-      }
     } else {
       cookieData = null;
       if (sendProgress) await sendProgress(0, 1, '无Cookie');
@@ -614,11 +690,13 @@ async function handleFetchSpaWithCookies(args, sendProgress = null, shouldSaveFi
     
     // 导航到目标页面（添加更多错误处理）
     let response;
+    let finalUrl = url;
     try {
       response = await page.goto(url, { 
         waitUntil: 'domcontentloaded',
         timeout: timeout 
       });
+      finalUrl = response?.url?.() || page.url() || url;
       
       // 检查页面是否正常加载
       if (response.status() >= 400) {
@@ -642,8 +720,21 @@ async function handleFetchSpaWithCookies(args, sendProgress = null, shouldSaveFi
       // 继续执行，不抛出异常
     }
     
+    // 提取目标规则：优先用户参数，其次域名预设
+    const domainRule = getDomainRuleForUrl(url);
+    const targetSelector = waitFor || domainRule.selector;
+
     // 等待动态内容渲染
     await new Promise(r => setTimeout(r, 800));
+    
+    // 如果有目标选择器，先等待元素出现
+    if (targetSelector) {
+      try {
+        await page.waitForSelector(targetSelector, { timeout: Math.min(timeout, 10000) });
+      } catch (error) {
+        // 选择器等待失败时继续处理，后续会回退到body
+      }
+    }
     
     // 模拟用户滚动行为
     try {
@@ -683,6 +774,7 @@ async function handleFetchSpaWithCookies(args, sendProgress = null, shouldSaveFi
     }
     
     await new Promise(r => setTimeout(r, 500));
+    finalUrl = page.url() || finalUrl;
     
     // 获取页面内容
     const content = await page.content();
@@ -713,237 +805,42 @@ async function handleFetchSpaWithCookies(args, sendProgress = null, shouldSaveFi
         });
         
         
-        // 提取并转换为Markdown格式内容
-        cleanContent = await page.evaluate((customSelector) => {
-          const title = document.title || '';
-          
-          // 自定义HTML转Markdown函数，重点保留原始换行和空白
-          function htmlToMarkdown(element) {
-            if (!element) return '';
-            
-            let targetElement = element;
-            
-            // 如果用户指定了CSS选择器，提取该选择器内的所有内容
-            if (customSelector) {
-              const customElements = element.querySelectorAll(customSelector);
-              if (customElements.length > 0) {
-                // 当有多个匹配节点时，去除包含关系的重复节点
-                const filteredElements = filterNestedElements(Array.from(customElements));
-                
-                if (filteredElements.length === 1) {
-                  targetElement = filteredElements[0];
-                } else if (filteredElements.length > 1) {
-                  // 多个节点：创建包装容器，整合所有内容
-                  const wrapper = document.createElement('div');
-                  filteredElements.forEach((elem, index) => {
-                    if (index > 0) {
-                      // 在多个内容块之间添加分隔符
-                      const separator = document.createElement('hr');
-                      wrapper.appendChild(separator);
-                    }
-                    wrapper.appendChild(elem.cloneNode(true));
-                  });
-                  targetElement = wrapper;
-                } else {
-                  // 经过过滤后没有元素
-                  return `错误：CSS选择器 "${customSelector}" 匹配到的元素存在完全包含关系，已被过滤`;
-                }
-              } else {
-                // 如果找不到指定选择器，返回错误信息
-                return `错误：未找到CSS选择器 "${customSelector}" 对应的元素`;
-              }
-              
-              // 辅助函数：过滤掉被其他元素包含的节点
-              function filterNestedElements(elements) {
-                return elements.filter(element => {
-                  // 检查当前元素是否被其他元素包含
-                  return !elements.some(otherElement => {
-                    return otherElement !== element && otherElement.contains(element);
-                  });
-                });
-              }
-            } else {
-              // 默认行为：获取页面主要内容区域
-              const contentSelectors = [
-                'main', 'article', '[role="main"]', 
-                '.content', '.main', '.post', '.article',
-                '#content', '#main', '#post', '#article'
-              ];
-              
-              for (let selector of contentSelectors) {
-                const found = element.querySelector(selector);
-                if (found && found.textContent.trim().length > 100) {
-                  targetElement = found;
-                  break;
-                }
-              }
+        // 按目标选择器提取HTML，未命中时回退到完整body
+        const extractedContent = await page.evaluate((selector) => {
+          const pageTitle = document.title || '';
+          let html = '';
+
+          if (selector) {
+            const elements = Array.from(document.querySelectorAll(selector));
+            if (elements.length > 0) {
+              html = elements.map(el => el.innerHTML || '').join('\n<hr/>\n');
             }
-            
-            // 移除不需要的元素
-            const cloned = targetElement.cloneNode(true);
-            const elementsToRemove = [
-              'script', 'style', 'nav', 'header', 'footer', 
-              '.ad', '.advertisement', '.sidebar', '.menu',
-              '[class*="nav"]', '[class*="menu"]', '[class*="sidebar"]'
-            ];
-            
-            elementsToRemove.forEach(selector => {
-              const elements = cloned.querySelectorAll(selector);
-              elements.forEach(el => el.remove());
-            });
-            
-            // 递归处理节点，保留原始文本格式
-            function processNode(node) {
-              if (node.nodeType === Node.TEXT_NODE) {
-                // 文本节点：保留换行，但清理每行开头的空格
-                const text = node.textContent;
-                // 按行分割，清理每行开头的空格，但保留换行符
-                return text.split('\n').map(line => line.trimStart()).join('\n');
-              }
-              
-              if (node.nodeType !== Node.ELEMENT_NODE) return '';
-              
-              const tag = node.tagName.toLowerCase();
-              let content = '';
-              
-              // 递归处理子节点
-              for (let child of node.childNodes) {
-                content += processNode(child);
-              }
-              
-              // 根据标签类型进行Markdown转换
-              switch (tag) {
-                case 'h1':
-                  return `\n# ${content.trim()}\n\n`;
-                case 'h2':
-                  return `\n## ${content.trim()}\n\n`;
-                case 'h3':
-                  return `\n### ${content.trim()}\n\n`;
-                case 'h4':
-                  return `\n#### ${content.trim()}\n\n`;
-                case 'h5':
-                  return `\n##### ${content.trim()}\n\n`;
-                case 'h6':
-                  return `\n###### ${content.trim()}\n\n`;
-                  
-                case 'p':
-                  return content + '\n\n';
-                  
-                case 'br':
-                  return '\n';
-                  
-                case 'strong':
-                case 'b':
-                  return `**${content}**`;
-                  
-                case 'em':
-                case 'i':
-                  return `*${content}*`;
-                  
-                case 'code':
-                  return `\`${content}\``;
-                  
-                case 'pre':
-                  return `\n\`\`\`\n${content}\n\`\`\`\n\n`;
-                  
-                case 'blockquote':
-                  const lines = content.split('\n');
-                  return '\n' + lines.map(line => line.trim() ? `> ${line}` : '>').join('\n') + '\n\n';
-                  
-                case 'ul':
-                  let ulResult = '\n';
-                  const liElements = node.querySelectorAll(':scope > li');
-                  liElements.forEach(li => {
-                    ulResult += `- ${li.textContent.trim()}\n`;
-                  });
-                  return ulResult + '\n';
-                  
-                case 'ol':
-                  let olResult = '\n';
-                  const olLiElements = node.querySelectorAll(':scope > li');
-                  olLiElements.forEach((li, index) => {
-                    olResult += `${index + 1}. ${li.textContent.trim()}\n`;
-                  });
-                  return olResult + '\n';
-                  
-                case 'a':
-                  const href = node.getAttribute('href') || '#';
-                  const linkText = content.trim();
-                  return linkText ? `[${linkText}](${href})` : '';
-                  
-                case 'img':
-                  const src = node.getAttribute('src') || '';
-                  const alt = node.getAttribute('alt') || 'image';
-                  return `![${alt}](${src})`;
-                  
-                case 'table':
-                  return '\n' + convertTable(node) + '\n\n';
-                  
-                case 'hr':
-                  return '\n---\n\n';
-                  
-                case 'div':
-                case 'span':
-                case 'section':
-                case 'article':
-                default:
-                  // 对于容器元素和其他元素，直接返回内容，保持原始格式
-                  return content;
-              }
-            }
-            
-            // 表格转换函数
-            function convertTable(table) {
-              const rows = table.querySelectorAll('tr');
-              if (rows.length === 0) return '';
-              
-              let markdown = '';
-              let isFirstRow = true;
-              
-              for (let row of rows) {
-                const cells = row.querySelectorAll('td, th');
-                if (cells.length === 0) continue;
-                
-                let rowText = '|';
-                for (let cell of cells) {
-                  rowText += ` ${cell.textContent.trim()} |`;
-                }
-                markdown += rowText + '\n';
-                
-                // 添加表头分隔符
-                if (isFirstRow) {
-                  let separator = '|';
-                  for (let i = 0; i < cells.length; i++) {
-                    separator += ' --- |';
-                  }
-                  markdown += separator + '\n';
-                  isFirstRow = false;
-                }
-              }
-              
-              return markdown;
-            }
-            
-            return processNode(cloned);
+          }
+          if (!html) {
+            html = document.body?.innerHTML || '';
           }
           
-          const markdownContent = htmlToMarkdown(document.body);
-          
           return {
-            title: title,
-            bodyText: markdownContent
+            title: pageTitle,
+            html
           };
-        }, waitFor);
+        }, targetSelector);
+        
+        const markdownContent = html2md4llm(extractedContent.html || '');
+        cleanContent = {
+          title: extractedContent.title || title || '',
+          bodyText: markdownContent
+        };
       } else {
         // 使用已获取的content作为备用
         const title = await page.title().catch(() => '');
-        cleanContent = { title: title, bodyText: content || '' };
+        cleanContent = { title: title, bodyText: html2md4llm(content || '') };
       }
     } catch (error) {
       if (error.message.includes('detached')) {
         // 使用已获取的HTML内容作为备用
         const title = await page.title().catch(() => '');
-        cleanContent = { title: title, bodyText: content || '' };
+        cleanContent = { title: title, bodyText: html2md4llm(content || '') };
       } else {
         throw error;
       }
@@ -951,12 +848,27 @@ async function handleFetchSpaWithCookies(args, sendProgress = null, shouldSaveFi
     
     // 压缩连续空行
     const compressedBodyText = cleanContent.bodyText.replace(/\n{3,}/g, '\n\n');
+    const blockedIfContains = Array.isArray(domainRule.blockedIfContains) ? domainRule.blockedIfContains : [];
+    const htmlForDetection = (content || '').toLowerCase();
+    const needsLoginState = blockedIfContains.some(marker => htmlForDetection.includes(String(marker).toLowerCase()));
+    const shouldShowCookieExpiredTips = needsLoginState;
+    
+    // 在正文顶部添加YAML元信息
+    const yamlLines = [
+      '---',
+      `title: ${toYamlPlainString(cleanContent.title)}`,
+      `start_url: ${toYamlPlainString(url)}`
+    ];
+    if (finalUrl && finalUrl !== url) {
+      yamlLines.push(`final_url: ${toYamlPlainString(finalUrl)}`);
+    }
+    if (shouldShowCookieExpiredTips) {
+      yamlLines.push(`cookie_expired_tips: ${toYamlPlainString('页面内容受限，请使用 mcp-fetch-page chrome extension 重新保存登录态。')}`);
+    }
+    yamlLines.push('---', '', '');
     
     // 保存Markdown格式内容到文件
-    let textContent = `Title: ${cleanContent.title}\n\n${compressedBodyText}`;
-    if (advisoryNotes && advisoryNotes.length > 0) {
-      textContent += `\n\n---\nNotes:\n${advisoryNotes.join('\n')}`;
-    }
+    let textContent = `${yamlLines.join('\n')}${compressedBodyText}`;
     if (shouldSaveFile) {
       const savedFilePath = savePageContent(url, textContent, cleanContent.title);
     }
