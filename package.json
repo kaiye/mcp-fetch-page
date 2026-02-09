@@ -5,7 +5,8 @@
   "main": "mcp-server/server.js",
   "type": "module",
   "scripts": {
-    "start": "node mcp-server/server.js"
+    "start": "node mcp-server/server.js",
+    "test": "node --check mcp-server/server.js && node --check mcp-server/debug.js"
   },
   "repository": {
     "type": "git",
