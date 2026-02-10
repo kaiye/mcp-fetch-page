@@ -466,7 +466,7 @@ function toYamlPlainString(value) {
 const server = new Server(
   {
     name: 'mcp-fetch-page',
-    version: '0.3.1',
+    version: '0.5.0',
   },
   {
     capabilities: {

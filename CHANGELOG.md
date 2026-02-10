@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-02-10
+
+### Changed
+- Bumped `@modelcontextprotocol/sdk` to `^1.26.0`
+- Bumped `html2md4llm` to `^1.1.3`
+- Synced project version to `0.5.0` in MCP server metadata and Chrome extension manifest
+
 ## [0.3.1] - 2025-10-15
 
 ### Fixed

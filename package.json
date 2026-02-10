@@ -1,6 +1,6 @@
 {
   "name": "mcp-fetch-page",
-  "version": "0.4.2",
+  "version": "0.5.0",
   "description": "MCP Server for browser-based web page fetching with automatic cookie support",
   "main": "mcp-server/server.js",
   "type": "module",
@@ -39,8 +39,8 @@
     "README-zh.md"
   ],
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.0.0",
-    "html2md4llm": "^1.1.2",
+    "@modelcontextprotocol/sdk": "^1.26.0",
+    "html2md4llm": "^1.1.3",
     "puppeteer-core": "^24.37.2"
   },
   "engines": {
