@@ -7,7 +7,7 @@ import fs from 'fs';
 import path from 'path';
 import { URL } from 'url';
 import os from 'os';
-import puppeteer from 'puppeteer';
+import puppeteer from 'puppeteer-core';
 import { main as html2md4llm } from 'html2md4llm';
 
 function resolveDataDir() {
