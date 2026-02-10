@@ -76,20 +76,8 @@ function resolveSystemChromePath() {
   }
 }
 
-// 加载域名规则配置（优先 domain-rules.json，兼容回退 domain-selectors.json）
+// 加载域名规则配置：内置规则 + 内置旧版选择器 + 用户数据目录覆盖规则
 let domainRules = {};
-try {
-  const currentDir = path.dirname(import.meta.url.replace('file://', ''));
-  const rulesPath = path.join(currentDir, 'domain-rules.json');
-  const legacySelectorsPath = path.join(currentDir, 'domain-selectors.json');
-  const configPath = fs.existsSync(rulesPath) ? rulesPath : legacySelectorsPath;
-  const configContent = fs.readFileSync(configPath, 'utf8');
-  const rawRules = JSON.parse(configContent);
-  domainRules = normalizeDomainRules(rawRules);
-} catch (error) {
-  // 如果配置文件不存在或读取失败，使用空配置
-  domainRules = {};
-}
 
 function normalizeDomainRules(rawRules) {
   const normalized = {};
@@ -111,6 +99,46 @@ function normalizeDomainRules(rawRules) {
   }
   return normalized;
 }
+
+function mergeDomainRules(baseRules, overrideRules) {
+  const merged = { ...baseRules };
+  for (const [domain, overrideRule] of Object.entries(overrideRules || {})) {
+    const baseRule = merged[domain] || { selector: null, blockedIfContains: [] };
+    const selector = overrideRule.selector != null ? overrideRule.selector : baseRule.selector;
+    const blockedIfContains = Array.from(new Set([
+      ...(baseRule.blockedIfContains || []),
+      ...(overrideRule.blockedIfContains || [])
+    ]));
+    merged[domain] = { selector, blockedIfContains };
+  }
+  return merged;
+}
+
+function loadDomainRules() {
+  try {
+    const currentDir = path.dirname(import.meta.url.replace('file://', ''));
+    const builtInRulesPath = path.join(currentDir, 'domain-rules.json');
+    const builtInLegacyPath = path.join(currentDir, 'domain-selectors.json');
+    const userRulesPath = path.join(DATA_DIR, 'domain-rules.json');
+
+    const builtInRules = normalizeDomainRules(fs.existsSync(builtInRulesPath)
+      ? JSON.parse(fs.readFileSync(builtInRulesPath, 'utf8'))
+      : {});
+    const builtInLegacyRules = normalizeDomainRules(fs.existsSync(builtInLegacyPath)
+      ? JSON.parse(fs.readFileSync(builtInLegacyPath, 'utf8'))
+      : {});
+    const userRules = normalizeDomainRules(fs.existsSync(userRulesPath)
+      ? JSON.parse(fs.readFileSync(userRulesPath, 'utf8'))
+      : {});
+
+    const mergedBuiltIn = mergeDomainRules(builtInLegacyRules, builtInRules);
+    return mergeDomainRules(mergedBuiltIn, userRules);
+  } catch (_) {
+    return {};
+  }
+}
+
+domainRules = loadDomainRules();
 
 // 根据URL获取对应的域名规则
 function getDomainRuleForUrl(url) {

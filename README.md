@@ -113,6 +113,7 @@ For MCP usage, configure `MCP_FETCH_PAGE_DATA_DIR` in your MCP client config `en
 The server will always use:
 - `<MCP_FETCH_PAGE_DATA_DIR>/cookies`
 - `<MCP_FETCH_PAGE_DATA_DIR>/pages`
+- `<MCP_FETCH_PAGE_DATA_DIR>/domain-rules.json` (optional user overrides merged with built-in rules)
 
 `node mcp-server/server.js` is only for local development/debugging.
 

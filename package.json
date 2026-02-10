@@ -1,6 +1,6 @@
 {
   "name": "mcp-fetch-page",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "MCP Server for browser-based web page fetching with automatic cookie support",
   "main": "mcp-server/server.js",
   "type": "module",

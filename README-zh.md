@@ -113,6 +113,7 @@ npx @modelcontextprotocol/inspector
 服务端固定使用：
 - `<MCP_FETCH_PAGE_DATA_DIR>/cookies`
 - `<MCP_FETCH_PAGE_DATA_DIR>/pages`
+- `<MCP_FETCH_PAGE_DATA_DIR>/domain-rules.json`（可选，和内置规则合并）
 
 `node mcp-server/server.js` 仅用于本地开发/调试。
 
